@@ -1,0 +1,6 @@
+D:\Прога\СПП (.NET)\Labs\Lab1\ThreadPool\ThreadPool\bin\Debug\ThreadPool.exe.config
+D:\Прога\СПП (.NET)\Labs\Lab1\ThreadPool\ThreadPool\bin\Debug\ThreadPool.exe
+D:\Прога\СПП (.NET)\Labs\Lab1\ThreadPool\ThreadPool\bin\Debug\ThreadPool.pdb
+D:\Прога\СПП (.NET)\Labs\Lab1\ThreadPool\ThreadPool\obj\Debug\ThreadPool.csprojResolveAssemblyReference.cache
+D:\Прога\СПП (.NET)\Labs\Lab1\ThreadPool\ThreadPool\obj\Debug\ThreadPool.exe
+D:\Прога\СПП (.NET)\Labs\Lab1\ThreadPool\ThreadPool\obj\Debug\ThreadPool.pdb
