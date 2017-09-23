@@ -13,9 +13,7 @@ namespace ThreadPool
         private Queue<Task> tasksQueue;
         private List<Thread> threads;
         private delegate void ThreadWorkerDelegate();
-        private readonly object dequeueLocker = new object();
-        private readonly object workendLocker = new object();
-        private readonly object threadendLocker = new object();
+        private readonly object locker = new object();
         private int workingThreadsCount;
 
         private struct Task
@@ -23,22 +21,20 @@ namespace ThreadPool
             public ParameterizedThreadStart taskProcedure;
             public object param;
 
-            public Task(ParameterizedThreadStart taskProcedure, object param)
+            public Task(ParameterizedThreadStart paramTaskProcedure, object param)
             {
-                this.taskProcedure = taskProcedure;
+                this.taskProcedure = paramTaskProcedure;
                 this.param = param;
             }
         }
 
-        private void ThreadWorker()
+        private void ThreadWorker(object id)
         {
-            bool isWorking = true;
-
             while (true)
             {
                 Task task = new Task(null, null);
 
-                lock (dequeueLocker)
+                lock (locker)
                 {
                     if (tasksQueue.Count != 0)
                     {
@@ -50,9 +46,10 @@ namespace ThreadPool
                 if (task.taskProcedure != null)
                 {
                     task.taskProcedure(task.param);
-                    Console.WriteLine("Threads Count: {0}; Queue Size: {1}; Working threads: {2}", threads.Count, tasksQueue.Count, workingThreadsCount);
-                    lock (dequeueLocker)
+                   
+                    lock (locker)
                     {
+                        //Console.WriteLine("Method {0} executed by thread with id {1} | Total threads count: {2}; Tasks in queue: {3}; Working threads count: {4}", task.taskProcedure.Method.ToString(), (int)id, threads.Count, tasksQueue.Count, workingThreadsCount);
                         workingThreadsCount--;                     
                     }
                 }
@@ -71,7 +68,7 @@ namespace ThreadPool
             {
                 Thread thread = new Thread(ThreadWorker);
                 threads.Add(thread);
-                thread.Start();
+                thread.Start(i);
             }
         }
 
@@ -88,7 +85,7 @@ namespace ThreadPool
             {
                 Thread thread = new Thread(ThreadWorker);
                 threads.Add(thread);
-                thread.Start();
+                thread.Start(i);
             }
 
             new Thread(ManageThreads).Start();
@@ -98,7 +95,7 @@ namespace ThreadPool
         {
             while (true)
             {
-                lock (dequeueLocker)
+                lock (locker)
                 {
                     if (tasksQueue.Count != 0 && threads.Count == workingThreadsCount && threads.Count < maxThreadCount)
                     {
@@ -122,6 +119,16 @@ namespace ThreadPool
             Task task = new Task(taskProcedure, param);
             tasksQueue.Enqueue(task);
             Console.WriteLine("Init threads: {0}", threads.Count);
+        }
+
+        public void Clear()
+        {
+            foreach (Thread thread in threads)
+            {
+                thread.Abort();
+            }
+
+            threads.Clear();
         }
     }
 }
