@@ -12,9 +12,9 @@ namespace ThreadPool
         private int maxThreadCount;
         private Queue<Task> tasksQueue;
         private List<Thread> threads;
-        private delegate void ThreadWorkerDelegate();
-        private readonly object locker = new object();
         private int workingThreadsCount;
+
+        private readonly object locker = new object();
 
         private struct Task
         {
@@ -28,7 +28,7 @@ namespace ThreadPool
             }
         }
 
-        private void ThreadWorker(object id)
+        private void ThreadWorker()
         {
             while (true)
             {
@@ -39,18 +39,16 @@ namespace ThreadPool
                     if (tasksQueue.Count != 0)
                     {
                         task = tasksQueue.Dequeue();
-                        workingThreadsCount++;
+                        workingThreadsCount += 1;
                     }
                 } 
               
                 if (task.taskProcedure != null)
                 {
                     task.taskProcedure(task.param);
-                   
                     lock (locker)
                     {
-                        //Console.WriteLine("Method {0} executed by thread with id {1} | Total threads count: {2}; Tasks in queue: {3}; Working threads count: {4}", task.taskProcedure.Method.ToString(), (int)id, threads.Count, tasksQueue.Count, workingThreadsCount);
-                        workingThreadsCount--;                     
+                        workingThreadsCount -= 1;
                     }
                 }
 
@@ -59,10 +57,9 @@ namespace ThreadPool
 
         public ThreadPool(int threadCount)
         {
-            minThreadCount = threadCount;
-            maxThreadCount = threadCount;
             threads = new List<Thread>();
             tasksQueue = new Queue<Task>();
+            workingThreadsCount = 0;
 
             for (int i = 0; i < threadCount; i++)
             {
@@ -74,10 +71,18 @@ namespace ThreadPool
 
         public ThreadPool(int minThreadCount, int maxThreadCount)
         {
+            if (minThreadCount > maxThreadCount)
+            {
+                int temp = minThreadCount;
+                minThreadCount = maxThreadCount;
+                maxThreadCount = temp;
+            }
+
             this.minThreadCount = minThreadCount;
             this.maxThreadCount = maxThreadCount;
             threads = new List<Thread>();
             tasksQueue = new Queue<Task>();
+            workingThreadsCount = 0;
 
             int threadCount = (maxThreadCount + minThreadCount) / 2;
 
@@ -85,7 +90,7 @@ namespace ThreadPool
             {
                 Thread thread = new Thread(ThreadWorker);
                 threads.Add(thread);
-                thread.Start(i);
+                thread.Start();
             }
 
             new Thread(ManageThreads).Start();
@@ -95,21 +100,17 @@ namespace ThreadPool
         {
             while (true)
             {
-                lock (locker)
+                if (tasksQueue.Count != 0 && threads.Count == workingThreadsCount && threads.Count < maxThreadCount)
                 {
-                    if (tasksQueue.Count != 0 && threads.Count == workingThreadsCount && threads.Count < maxThreadCount)
-                    {
-                        Thread thread = new Thread(ThreadWorker);
-                        threads.Add(thread);
-                        thread.Start();
-                    }
+                    Thread thread = new Thread(ThreadWorker);
+                    threads.Add(thread);
+                    thread.Start();
+                }
 
-                    if (tasksQueue.Count == 0 && workingThreadsCount == 0 && threads.Count > minThreadCount)
-                    {
-                        threads.ElementAt(threads.Count - 1).Abort();
-                        threads.RemoveAt(threads.Count - 1);
-                        Console.WriteLine("Threads Count: {0}; Queue Size: {1}; Working threads: {2}", threads.Count, tasksQueue.Count, workingThreadsCount);
-                    }
+                if (tasksQueue.Count == 0 && workingThreadsCount == 0 && threads.Count > minThreadCount)        
+                {
+                    threads.ElementAt(threads.Count - 1).Abort();
+                    threads.RemoveAt(threads.Count - 1);
                 }
             }
         }
@@ -118,9 +119,16 @@ namespace ThreadPool
         {
             Task task = new Task(taskProcedure, param);
             tasksQueue.Enqueue(task);
-            Console.WriteLine("Init threads: {0}", threads.Count);
         }
 
+        public bool HasTasks()
+        {
+            if (workingThreadsCount > 0 || tasksQueue.Count != 0)
+                return true;
+            else
+                return false;
+
+        }
         public void Clear()
         {
             foreach (Thread thread in threads)

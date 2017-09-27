@@ -11,8 +11,7 @@ namespace ThreadPool
 {
     class Program
     {
-       
-        class CopyInfo
+        struct CopyInfo
         {
             public string source;
             public string dest;
@@ -24,7 +23,7 @@ namespace ThreadPool
             }
         }
 
-        class CopyFilePartInfo
+        struct CopyFilePartInfo
         {
             public string source;
             public string dest;
@@ -42,44 +41,68 @@ namespace ThreadPool
             }
         }
 
-        static ThreadPool threadPool;
+        private static ThreadPool threadPool;
+        private const int DEFAULT_BUFFER_SIZE = 5000000;
         private delegate void CopyDelegate(CopyInfo copyInfo);
-
-        private static void DoSmth(object o)
-        {
-            int a = 0;
-            for (int i = 0; i < 1000000; i++)
-                for (int j = 0; j < 100; j++)
-                    a = i + j;
-                    Console.WriteLine(a);                 
-        }
 
         private static void CopyFile(object copyInfo)
         {
-            FileStream reader = new FileStream(((CopyInfo)copyInfo).source, FileMode.Open);
-            BinaryWriter writer = new BinaryWriter(File.Create(((CopyInfo)copyInfo).dest));
-            
-            int symbol;
-            while ((symbol = reader.ReadByte()) != -1)
-            {
-                writer.Write((byte)symbol);
-            }
+            string source = ((CopyInfo)copyInfo).source;
+            string dest = ((CopyInfo)copyInfo).dest;
+            FileInfo fileInfo = new FileInfo(source);
+            long bytesCount = fileInfo.Length;
+            byte[] buffer = new byte[DEFAULT_BUFFER_SIZE];
+            FileStream reader = null;
+            FileStream writer = null;
 
-            reader.Close();
-            writer.Close();
+            try
+            {
+                reader = new FileStream(source, FileMode.Open);
+                writer = new FileStream(dest, FileMode.Create);
+
+                while (bytesCount > 0)
+                {
+                    if (bytesCount > buffer.Length)
+                    {
+                        reader.Read(buffer, 0, buffer.Length);
+                        writer.Write(buffer, 0, buffer.Length);
+                        writer.Flush();
+                        bytesCount -= buffer.Length;
+                    }
+                    else
+                    {
+                        reader.Read(buffer, 0, (int)bytesCount);
+                        writer.Write(buffer, 0, (int)bytesCount);
+                        bytesCount = 0;
+                    }
+                }
+            }
+            catch (IOException)
+            {
+                Console.WriteLine("Error during directory copying. Directory not copied");
+                threadPool.Clear();
+            }
+            finally
+            {
+                if (reader != null)
+                    reader.Close();
+                if (writer != null)
+                    writer.Close();
+            }
         }
 
         private static void CopyDir(string source, string dest)
         {
+            source = Path.GetFullPath(source);
+            dest = Path.GetFullPath(dest);
+            string dirNotFound = source;
+
             try
             {
-                string[] directories = Directory.GetDirectories(source);
-                
-                foreach (string directory in directories)
+                if (!Directory.Exists(dest))
                 {
-                    string path = dest + "\\" + Path.GetFileName(directory);
-                    Directory.CreateDirectory(path);
-                    CopyDir(directory, path);
+                    dirNotFound = dest;
+                    throw new DirectoryNotFoundException();
                 }
 
                 string[] files = Directory.GetFiles(source);
@@ -89,73 +112,124 @@ namespace ThreadPool
                     ParameterizedThreadStart CopyDelegate = CopyFile;
                     threadPool.AddTask(CopyDelegate, new CopyInfo(file, dest + "\\" + Path.GetFileName(file)));
                 }
+
+                string[] directories = Directory.GetDirectories(source);
+                
+                foreach (string directory in directories)
+                {
+                    string path = dest + "\\" + Path.GetFileName(directory);
+                    Directory.CreateDirectory(path);
+                    CopyDir(directory, path);
+                }
             }
             catch (DirectoryNotFoundException)
             {
-                Console.WriteLine("Directory {0} doesn't exists", source);
+                Console.WriteLine("Directory {0} doesn't exists", dirNotFound);
             }
+
+            while (threadPool.HasTasks());
         }
 
-        static object locker = new object();
+        private static readonly object locker = new object();
 
         private static void CopyFilePart(object param)
         {
-            FileStream reader = new FileStream(((CopyFilePartInfo)param).source, FileMode.Open, FileAccess.Read);
+            string source = ((CopyFilePartInfo)param).source;
+            long offset = ((CopyFilePartInfo)param).offset;
+            long length = ((CopyFilePartInfo)param).length;
             FileStream writer = ((CopyFilePartInfo)param).writer;
+            FileStream reader = null;
 
-            long bytesLeft = ((CopyFilePartInfo)param).length;
-            reader.Seek(((CopyFilePartInfo)param).offset, SeekOrigin.Begin);
-            byte[] buffer = new byte[5000000];
-
-            while(bytesLeft > 0)
+            try
             {
-                if (bytesLeft > buffer.Length)
+                reader = new FileStream(source, FileMode.Open, FileAccess.Read);
+
+                reader.Seek(offset, SeekOrigin.Begin);
+                long bytesCount = length;
+                byte[] buffer = new byte[DEFAULT_BUFFER_SIZE];
+
+                while (bytesCount > 0)
                 {
-                    reader.Read(buffer, 0, buffer.Length);
-                    lock (locker)
+                    if (bytesCount > buffer.Length)
                     {
-                        if (((CopyFilePartInfo)param).offset == 0)
+                        reader.Read(buffer, 0, buffer.Length);
+                        lock (locker)
                         {
-                            int a = 42;
+                            writer.Seek(offset + length - bytesCount, SeekOrigin.Begin);
+                            writer.Write(buffer, 0, buffer.Length);
+                            writer.Flush();
                         }
-                        writer.Seek(((CopyFilePartInfo)param).offset + ((CopyFilePartInfo)param).length - bytesLeft, SeekOrigin.Begin);
-                        writer.Write(buffer, 0, buffer.Length);
-                        writer.Flush();
-                    }  
-                    bytesLeft -= buffer.Length;
-                }
-                else
-                {
-                    reader.Read(buffer, 0, (int)bytesLeft);
-                    lock (locker)
+
+                        bytesCount -= buffer.Length;
+                    }
+                    else
                     {
-                        writer.Seek(((CopyFilePartInfo)param).offset + ((CopyFilePartInfo)param).length - bytesLeft, SeekOrigin.Begin);
-                        writer.Write(buffer, 0, (int)bytesLeft);
-                        writer.Flush();
-                    }  
-                    bytesLeft = 0;
-                }           
-            }       
+                        reader.Read(buffer, 0, (int)bytesCount);
+                        lock (locker)
+                        {
+                            writer.Seek(offset + length - bytesCount, SeekOrigin.Begin);
+                            writer.Write(buffer, 0, (int)bytesCount);
+                            writer.Flush();
+                        }
+
+                        bytesCount = 0;
+                    }
+                }
+            }
+            catch (IOException)
+            {
+                Console.WriteLine("Error during file copying. File not copied");
+                threadPool.Clear();
+            }
+            finally
+            {
+                if (reader != null)
+                    reader.Close();
+            }          
         }
 
         static void CopyLargeFile(string source, string dest, int parts)
         {
             FileInfo srcInfo = new FileInfo(source);
-            FileStream writer = new FileStream(dest, FileMode.Create);
 
             long size = srcInfo.Length;
             long partLength = size / parts;
 
-            for (int i = 0; i < parts && partLength > 0; i++)
+            using (FileStream writer = new FileStream(dest, FileMode.Create))
             {
-                long offset = i * partLength; 
-                threadPool.AddTask(CopyFilePart, new CopyFilePartInfo(source, dest, writer, offset, partLength));
+                for (int i = 0; i < parts && partLength > 0; i++)
+                {
+                    long offset = i * partLength;
+                    threadPool.AddTask(CopyFilePart, new CopyFilePartInfo(source, dest, writer, offset, partLength));
+                }
+
+                if (size % parts != 0)
+                {
+                    threadPool.AddTask(CopyFilePart, new CopyFilePartInfo(source, dest, writer, partLength * parts, size % parts));
+                }
+
+                while (threadPool.HasTasks());
+            }
+        }
+
+        static string[] ParseCommand(string command)
+        {
+            string commandName = "";
+
+            int i = 0;
+            while (command[i] != ' ')
+            {
+                commandName += command[i];
+                i++;
             }
 
-            if (size % parts != 0)
-            {
-                threadPool.AddTask(CopyFilePart, new CopyFilePartInfo(source, dest, writer, partLength * parts, size % parts));
-            }
+            command = command.Remove(0, i);
+            string[] commandParams = command.Split(',');
+            string[] commandInfo = new string[commandParams.Length + 1];
+            commandInfo[0] = commandName;
+            Array.Copy(commandParams, 0, commandInfo, 1, commandParams.Length);
+
+            return commandInfo;
         }
 
         static void Main(string[] args)
@@ -164,86 +238,115 @@ namespace ThreadPool
 
             while (isWork)
             {
-                string option = Console.ReadLine();
-                string[] optionInfo = option.Split('|');
-
-                switch(optionInfo[0])
+                string command = Console.ReadLine();
+                if (command != "")
                 {
-                    case "thread":
-                        if (optionInfo.Length == 2)
-                        {
-                            try
-                            {
-                                threadPool = new ThreadPool(int.Parse(optionInfo[1]));
-                            }
-                            catch (Exception)
-                            {
-                                Console.WriteLine("<thread_count> must be a number");
-                            }
-                        }
-                        else if (optionInfo.Length == 3)
-                        {
-                            try
-                            {
-                                threadPool = new ThreadPool(int.Parse(optionInfo[1]), int.Parse(optionInfo[2]));
-                            }
-                            catch (Exception)
-                            {
-                                Console.WriteLine("<min_thread_count> and <max_thread_count> must be a number");
-                            }
-                        }
-                        else
-                        {
-                            Console.WriteLine("Usage: thread <thread_count> | <min_thread_count> <max_thread_count>");
-                        }
+                    string[] commandInfo = ParseCommand(command);
 
-                        break;
-                    case "copydir":
-                        if (optionInfo.Length != 3)
-                        {
-                            Console.WriteLine("Usage: copydir <src_path> <dest_path>");
-                        }
-                        else if (threadPool != null)
-                        {
-                            CopyDir(optionInfo[1], optionInfo[2]);
-                        }
-                        else
-                        {
-                            Console.WriteLine("Thread pool wasn't created");
-                        }
-
-                        break;
-                    case "copyfile":
-                        if (optionInfo.Length != 4)
-                        {
-                            Console.WriteLine("Usage: copyfile <src_path> <dest_path> <file_parts>");
-                        }
-                        else if (threadPool != null)
-                        {
-                            try
+                    switch (commandInfo[0])
+                    {
+                        case "thread":
+                            if (commandInfo.Length == 2)
                             {
-                                CopyLargeFile(optionInfo[1], optionInfo[2], int.Parse(optionInfo[3]));
+                                try
+                                {
+                                    threadPool = new ThreadPool(int.Parse(commandInfo[1]));
+                                }
+                                catch (Exception)
+                                {
+                                    Console.WriteLine("<thread_count> must be a number");
+                                }
                             }
-                            catch (Exception)
+                            else if (commandInfo.Length == 3)
                             {
-                                Console.WriteLine("<file_parts> must be a number");
+                                try
+                                {
+                                    threadPool = new ThreadPool(int.Parse(commandInfo[1]), int.Parse(commandInfo[2]));
+                                }
+                                catch (Exception)
+                                {
+                                    Console.WriteLine("<min_thread_count> and <max_thread_count> must be a number");
+                                }
                             }
-                        }
-                        else
-                        {
-                            Console.WriteLine("Thread pool wasn't created");
-                        }
+                            else
+                            {
+                                Console.WriteLine("Usage: thread <thread_count> | <min_thread_count>,<max_thread_count>");
+                            }
 
-                        break;
-                    case "exit":
-                        if (threadPool != null)
-                            threadPool.Clear();
-                        isWork = false;
+                            break;
+                        case "copydir":
+                            if (commandInfo.Length != 3)
+                            {
+                                Console.WriteLine("Usage: copydir <src_path>,<dest_path>");
+                            }
+                            else if (threadPool != null)
+                            {
+                                try
+                                {
+                                    CopyDir(commandInfo[1], commandInfo[2]);
+                                    Console.WriteLine("Directory {0} was succesfully copied to directory {1}", commandInfo[1], commandInfo[2]);
+                                }
+                                catch (DirectoryNotFoundException) { }
+                                catch (FileNotFoundException e)
+                                {
+                                    Console.WriteLine("File {0} doesn't exists", e.FileName);
+                                }
+                                catch (Exception)
+                                {
+                                    Console.WriteLine("Some error happened during copying. Directory not copied");
+                                }
+                            }
+                            else
+                            {
+                                Console.WriteLine("Thread pool wasn't created");
+                            }
 
-                        break;
-                    default:
-                        Console.WriteLine("Command {0} not found", optionInfo[0]);
-                        break;
+                            break;
+                        case "copyfile":
+                            if (commandInfo.Length != 4)
+                            {
+                                Console.WriteLine("Usage: copyfile <src_path>,<dest_path>,<file_parts>");
+                            }
+                            else if (threadPool != null)
+                            {
+                                try
+                                {
+                                    CopyLargeFile(commandInfo[1], commandInfo[2], int.Parse(commandInfo[3]));
+                                    Console.WriteLine("File {0} was succesfully copied to file {1}", commandInfo[1], commandInfo[2]);
+                                }
+                                catch (FileNotFoundException e)
+                                {
+                                    Console.WriteLine("File {0} doesn't exists", e.FileName);
+                                }
+                                catch (FormatException)
+                                {
+                                    Console.WriteLine("<file_parts> must be a number");
+                                }
+                                catch (ArgumentNullException)
+                                {
+                                    Console.WriteLine("<file_parts> must be a number");
+                                }
+                                catch (Exception)
+                                {
+                                    Console.WriteLine("Some error happened during copying. File not copied");
+                                }
+                            }
+                            else
+                            {
+                                Console.WriteLine("Thread pool wasn't created");
+                            }
+
+                            break;
+                        case "exit":
+                            if (threadPool != null)
+                                threadPool.Clear();
+                            isWork = false;
+
+                            break;
+                        default:
+                            Console.WriteLine("Command {0} not found", commandInfo[0]);
+                            break;
+                    }
                 }
             }
         }
