@@ -6,7 +6,7 @@ using System.Threading;
 
 namespace ThreadPool
 {
-    class ThreadPool
+    class ThreadPool : IThreadPool
     {
         private int minThreadCount;
         private int maxThreadCount;
@@ -117,6 +117,9 @@ namespace ThreadPool
 
         public void AddTask(ParameterizedThreadStart taskProcedure, object param)
         {
+            if (taskProcedure == null)
+                throw new ArgumentNullException();
+
             Task task = new Task(taskProcedure, param);
             tasksQueue.Enqueue(task);
         }

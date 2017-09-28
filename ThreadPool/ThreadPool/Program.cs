@@ -178,8 +178,7 @@ namespace ThreadPool
             }
             catch (IOException)
             {
-                Console.WriteLine("Error during file copying. File not copied");
-                threadPool.Clear();
+                Console.WriteLine("Error during copying file {0}. File {0} not copied", source);
             }
             finally
             {
