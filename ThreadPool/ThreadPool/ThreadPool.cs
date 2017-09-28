@@ -33,7 +33,7 @@ namespace ThreadPool
             while (true)
             {
                 Task task = new Task(null, null);
-
+                
                 lock (locker)
                 {
                     if (tasksQueue.Count != 0)
@@ -84,7 +84,7 @@ namespace ThreadPool
             tasksQueue = new Queue<Task>();
             workingThreadsCount = 0;
 
-            int threadCount = (maxThreadCount + minThreadCount) / 2;
+            int threadCount = minThreadCount;
 
             for (int i = 0; i < threadCount; i++)
             {
@@ -107,7 +107,7 @@ namespace ThreadPool
                     thread.Start();
                 }
 
-                if (tasksQueue.Count == 0 && workingThreadsCount == 0 && threads.Count > minThreadCount)        
+                if (tasksQueue.Count == 0 && workingThreadsCount == 0 && threads.Count > minThreadCount)
                 {
                     threads.ElementAt(threads.Count - 1).Abort();
                     threads.RemoveAt(threads.Count - 1);
@@ -121,7 +121,10 @@ namespace ThreadPool
                 throw new ArgumentNullException();
 
             Task task = new Task(taskProcedure, param);
-            tasksQueue.Enqueue(task);
+            lock (locker)
+            {
+                tasksQueue.Enqueue(task);
+            }
         }
 
         public bool HasTasks()
